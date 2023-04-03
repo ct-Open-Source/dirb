@@ -10,21 +10,20 @@ from typing import Iterable, Callable
 class Dirbuster:
     def __init__(self, 
                  root_url: str,
-                 paths: Iterable[str],
                  pre_fetch_callback: Callable[[str], None] | None = None,
                  found_callback: Callable[[str], None] | None = None,
                  n_workers: int = 10) -> None:
         self.root_url = root_url
         self.found_callback = found_callback
         self.pre_fetch_callback = pre_fetch_callback
-        self.paths = set([path.strip() for path in paths])
         self.queue = asyncio.Queue()
         self.n_workers = n_workers
         self._dead = []
         self._alive = []
 
-    async def run(self) -> None:
-        for url in self.paths:
+    async def run(self, paths: Iterable[str]) -> None:
+        paths = set([path.strip() for path in paths])
+        for url in paths:
             await self.queue.put(url)
         workers = [asyncio.create_task(self.worker()) for _ in range(self.n_workers)]
         await self.queue.join()
@@ -74,19 +73,24 @@ def found_hook(url: str) -> None:
     print(f'\rFOUND {url}.')
 
 
-async def main(server: str, verbose: int, paths: io.StringIO):
+async def main(server: str, verbose: int, paths: Iterable[io.StringIO]):
     found_callback = found_hook if verbose > 0 else None
     pre_fetch_callback = pre_fetch_hook if verbose > 0 else None
-    dirb = Dirbuster(server, paths.readlines(), pre_fetch_callback, found_callback, 8)
-    await dirb.run()
-    print('Found:')
-    for result in dirb.alive:
-        print(f' - {result}')
+    dirb = Dirbuster(server, pre_fetch_callback, found_callback, 8)
+    for p in paths:        
+        await dirb.run(p.readlines())
+        print('Found:')
+        for result in dirb.alive:
+            print(f' - {result}')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='dirb', description='Directory Buster')
     parser.add_argument('root', help='Root URL, e.g. http://example.com')
     parser.add_argument('-v', '--verbose', action='count', default=0)
+    parser.add_argument('-w', '--word-file', action='append', default=[])
     args = parser.parse_args()
-    asyncio.run(main(args.root, args.verbose, sys.stdin))
+    word_files = [sys.stdin]
+    if len(args.word_file) > 0:
+        word_files = [open(filename, 'r') for filename in args.word_file]
+    asyncio.run(main(args.root, args.verbose, word_files))

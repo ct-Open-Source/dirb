@@ -9,12 +9,12 @@ from typing import Iterable, Callable
 
 class Dirbuster:
     def __init__(self, 
-                 server: str,
+                 root_url: str,
                  paths: Iterable[str],
                  pre_fetch_callback: Callable[[str], None] | None = None,
                  found_callback: Callable[[str], None] | None = None,
                  n_workers: int = 10) -> None:
-        self.server = server
+        self.root_url = root_url
         self.found_callback = found_callback
         self.pre_fetch_callback = pre_fetch_callback
         self.paths = set([path.strip() for path in paths])
@@ -23,7 +23,7 @@ class Dirbuster:
         self._dead = []
         self._alive = []
 
-    async def run(self):
+    async def run(self) -> None:
         for url in self.paths:
             await self.queue.put(url)
         workers = [asyncio.create_task(self.worker()) for _ in range(self.n_workers)]
@@ -31,9 +31,9 @@ class Dirbuster:
         for worker in workers:
             worker.cancel()
 
-    async def grab(self):
+    async def grab(self) -> None:
         path = await self.queue.get()
-        url = f'{self.server}{path}'
+        url = f'{self.root_url}{path}'
         if self.pre_fetch_callback is not None:
             self.pre_fetch_callback(url)
         try:
@@ -50,7 +50,7 @@ class Dirbuster:
         finally:
             self.queue.task_done()
 
-    async def worker(self):
+    async def worker(self) -> None:
         while True:
             try:
                 await self.grab()
@@ -71,7 +71,7 @@ def pre_fetch_hook(url: str) -> None:
 
 
 def found_hook(url: str) -> None:
-    print(f'\rFOUND {url} ...')
+    print(f'\rFOUND {url}.')
 
 
 async def main(server: str, verbose: int, paths: io.StringIO):

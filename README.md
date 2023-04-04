@@ -39,3 +39,8 @@ See `dirb.py -h` for more options.
 ## License
 
 See [LICENSE](LICENSE)
+
+
+## Copyright
+
+Copyright ©️ 2023 [Oliver Lau](mailto:ola@ct.de), Heise Medien GmbH & Co. KG

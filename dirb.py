@@ -21,7 +21,7 @@ class Dirb:
         self.auth_user_name, self.auth_password = credentials.split(':') \
             if isinstance(credentials, str) else None, None
         self.queue = asyncio.Queue()
-        self.n_workers = kwargs.get('n_workers', 10)
+        self.num_workers = kwargs.get('num_workers', 10)
         self.results = []
 
     async def run(self, paths: Iterable[str]) -> None:
@@ -31,7 +31,7 @@ class Dirb:
             await self.queue.put(url)
         # spawn workers
         workers = [asyncio.create_task(self.worker()) 
-                   for _ in range(self.n_workers)]
+                   for _ in range(self.num_workers)]
         # wait for queue to be processed
         await self.queue.join()
         for worker in workers:
@@ -39,6 +39,8 @@ class Dirb:
 
     async def try_url(self) -> None:
         path = await self.queue.get()
+        if not path.startswith('/'):
+            path = '/' + path
         url = f'{self.base_url}{path}'
         if callable(self.pre_fetch_callback):
             self.pre_fetch_callback(path)
@@ -107,17 +109,17 @@ async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwar
         await dirb.run(p.readlines())
 
     if kwargs.get('output_file'):
-        output = open(kwargs.get('output_file'), 'w+')  
+        output = open(kwargs.get('output_file'), 'w+')
     else:
         output = sys.stdout
 
     if kwargs.get('csv'):
-        escape_quotes = str.maketrans({'"': r'\"'})
+        ESC_QUOTES = str.maketrans({'"': r'\"'})
         FIELDS = ['status_code', 'path', 'effective_url', 'headers']
         output.write(f'''{';'.join(FIELDS)}\n''')
         for result in dirb.results:
-            output.write(f'''{result['status_code']};"{result['path'].translate(escape_quotes)}";"{result['effective_url'].translate(escape_quotes)}";''')
-            headers = [f'"{h.translate(escape_quotes)}:{v.translate(escape_quotes)}"' for (h, v) in result['headers']]
+            output.write(f'''{result['status_code']};"{result['path'].translate(ESC_QUOTES)}";"{result['effective_url'].translate(ESC_QUOTES)}";''')
+            headers = [f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers']]
             output.write(','.join(headers))
             output.write('\n')
     else:
@@ -132,8 +134,10 @@ async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwar
 
 if __name__ == '__main__':
     DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
+    DEFAULT_NUM_WORKERS = 20
     parser = argparse.ArgumentParser(prog='dirb', description='Directory Buster')
     parser.add_argument('base_url', help='Base URL, e.g. https://example.com')
+    parser.add_argument('-n', '--num-workers', help='parallelize scanning with n workers running concurrently', type=int, default=DEFAULT_NUM_WORKERS)
     parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('-w', '--word-file', help='Word file', action='append', default=[])
     parser.add_argument('-a', '--user-agent', help='User agent', default=DEFAULT_USER_AGENT)
@@ -156,5 +160,6 @@ if __name__ == '__main__':
         headers=args.header,
         credentials=args.credentials,
         follow_redirects=args.follow_redirects,
+        num_workers=args.num_workers,
         csv=args.csv,
         output_file=args.output))

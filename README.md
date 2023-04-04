@@ -19,12 +19,15 @@ For example:
 ```
 pipenv run ./dirb.py "http://example.com" \
   -w path-list1.txt -w path-list2.txt \
-  --csv \
   -f \
+  --csv \
   -o scan-result.csv
 ```
 
-Where `http://example.com` is the root of the URL to scan for existent paths, and `path-list[1..n].txt` are files containing paths to check. `--csv` produces CSV output, suitable for spreadsheet programs. With option `-f` the HTTP client follows redirects. `-o` directs output to a file.
+Where `http://example.com` is the root of the URL to scan for existent paths, and `path-list[1..n].txt` are files containing paths to check. 
+With option `-f` the HTTP client follows redirects.
+`--csv` produces CSV output, suitable for spreadsheet programs.
+`-o` directs output to a file.
 
 See `dirb.py -h` for more options.
 

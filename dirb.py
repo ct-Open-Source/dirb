@@ -87,18 +87,17 @@ class Dirb:
 
 
 async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwargs) -> None:
-    lock = asyncio.Lock()
 
     async def pre_fetch_hook(url: str) -> None:
-        async with lock:
+        async with asyncio.Lock():
             print(f'\rChecking {url} ... \u001b[0K', end='', flush=True)
 
     async def found_hook(url: str) -> None:
-        async with lock:
+        async with asyncio.Lock():
             print(f'\n\u001b[32;1mFOUND {url}\u001b[0m')
 
     async def error_hook(message: str) -> None:
-        async with lock:
+        async with asyncio.Lock():
             print(f'\n\u001b[31;1mERROR: {message}\u001b[0m')
 
     quiet = kwargs.get('quiet', False)

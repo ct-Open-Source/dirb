@@ -43,7 +43,7 @@ class Dirb:
             path = '/' + path
         url = f'{self.base_url}{path}'
         if callable(self.pre_fetch_callback):
-            self.pre_fetch_callback(path)
+            await self.pre_fetch_callback(path)
         try:
             http_client = AsyncHTTPClient()
             req = HTTPRequest(url,
@@ -58,10 +58,10 @@ class Dirb:
                 'headers': [header for header in response.headers.get_all()],
             })
             if callable(self.found_callback):
-                self.found_callback(path)
+                await self.found_callback(path)
         except HTTPClientError as e:
             if callable(self.error_callback):
-                self.error_callback(f'{path} -> HTTP status code = {e.code}')
+                await self.error_callback(f'{path} -> HTTP status code = {e.code}')
             self.results.append({
                 'path': path,
                 'effective_url': '',
@@ -87,22 +87,27 @@ class Dirb:
 
 
 async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwargs) -> None:
+    lock = asyncio.Lock()
 
-    def pre_fetch_hook(url: str) -> None:
-        print(f'Trying {url} ...')
+    async def pre_fetch_hook(url: str) -> None:
+        async with lock:
+            print(f'\rChecking {url} ... \u001b[0K', end='', flush=True)
 
-    def found_hook(url: str) -> None:
-        print(f'\u001b[32;1mFOUND {url}\u001b[0m')
+    async def found_hook(url: str) -> None:
+        async with lock:
+            print(f'\n\u001b[32;1mFOUND {url}\u001b[0m')
 
-    def error_hook(message: str) -> None:
-        print(f'\u001b[31;1mERROR: {message}\u001b[0m')
+    async def error_hook(message: str) -> None:
+        async with lock:
+            print(f'\n\u001b[31;1mERROR: {message}\u001b[0m')
 
+    quiet = kwargs.get('quiet', False)
     kwargs['pre_fetch_callback'] = pre_fetch_hook \
-        if verbose > 0 else None
+        if not quiet else None
     kwargs['found_callback'] = found_hook \
-        if verbose > 0 else None
+        if not quiet and verbose > 0 else None
     kwargs['error_callback'] = error_hook \
-        if verbose > 0 else None
+        if not quiet and verbose > 0 else None
 
     dirb = Dirb(base_url, **kwargs)
     for p in paths:        
@@ -139,6 +144,7 @@ if __name__ == '__main__':
     parser.add_argument('base_url', help='Base URL, e.g. https://example.com')
     parser.add_argument('-n', '--num-workers', help='parallelize scanning with n workers running concurrently', type=int, default=DEFAULT_NUM_WORKERS)
     parser.add_argument('-v', '--verbose', action='count', default=0)
+    parser.add_argument('-q', '--quiet', action='store_true', default=False)
     parser.add_argument('-w', '--word-file', help='Word file', action='append', default=[])
     parser.add_argument('-a', '--user-agent', help='User agent', default=DEFAULT_USER_AGENT)
     parser.add_argument('-c', '--cookie', help='Cookie string')
@@ -154,7 +160,8 @@ if __name__ == '__main__':
     asyncio.run(main(
         args.base_url,
         args.verbose,
-        word_files, 
+        word_files,
+        quiet=args.quiet,
         user_agent=args.user_agent,
         cookie=args.cookie,
         headers=args.header,

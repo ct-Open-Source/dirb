@@ -3,94 +3,158 @@
 import argparse
 import sys
 import io
-from tornado.httpclient import AsyncHTTPClient, HTTPClientError
+from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
-from typing import Iterable, Callable
+from typing import Iterable
 
-class Dirbuster:
-    def __init__(self, 
-                 root_url: str,
-                 pre_fetch_callback: Callable[[str], None] | None = None,
-                 found_callback: Callable[[str], None] | None = None,
-                 n_workers: int = 10) -> None:
-        self.root_url = root_url
-        self.found_callback = found_callback
-        self.pre_fetch_callback = pre_fetch_callback
+class Dirb:
+    def __init__(self, base_url: str, **kwargs) -> None:
+        self.base_url = base_url
+        self.found_callback = kwargs.get('found_callback', None)
+        self.error_callback = kwargs.get('error_callback', None)
+        self.pre_fetch_callback = kwargs.get('pre_fetch_callback', None)
+        self.user_agent = kwargs.get('user_agent', None)
+        self.follow_redirects = kwargs.get('follow_redirects', False)
+        self.cookies = kwargs.get('cookies', None)
+        self.headers = kwargs.get('headers', None)
+        credentials = kwargs.get('credentials', None)
+        self.auth_user_name, self.auth_password = credentials.split(':') \
+            if isinstance(credentials, str) else None, None
         self.queue = asyncio.Queue()
-        self.n_workers = n_workers
-        self._dead = []
-        self._alive = []
+        self.n_workers = kwargs.get('n_workers', 10)
+        self.results = []
 
     async def run(self, paths: Iterable[str]) -> None:
+        # sanitize input stream
         paths = set([path.strip() for path in paths])
         for url in paths:
             await self.queue.put(url)
-        workers = [asyncio.create_task(self.worker()) for _ in range(self.n_workers)]
+        # spawn workers
+        workers = [asyncio.create_task(self.worker()) 
+                   for _ in range(self.n_workers)]
+        # wait for queue to be processed
         await self.queue.join()
         for worker in workers:
             worker.cancel()
 
-    async def grab(self) -> None:
+    async def try_url(self) -> None:
         path = await self.queue.get()
-        url = f'{self.root_url}{path}'
-        if self.pre_fetch_callback is not None:
-            self.pre_fetch_callback(url)
+        url = f'{self.base_url}{path}'
+        if callable(self.pre_fetch_callback):
+            self.pre_fetch_callback(path)
         try:
             http_client = AsyncHTTPClient()
-            response = await http_client.fetch(url)
-            if response.code == 200:
-                self._alive.append(url)
-                if self.found_callback is not None:
-                    self.found_callback(url)
+            req = HTTPRequest(url,
+                              user_agent=self.user_agent,
+                              headers=self.headers,
+                              follow_redirects=self.follow_redirects)
+            response = await http_client.fetch(req)
+            self.results.append({
+                'path': path,
+                'effective_url': response.effective_url,
+                'status_code': response.code,
+                'headers': [header for header in response.headers.get_all()],
+            })
+            if callable(self.found_callback):
+                self.found_callback(path)
         except HTTPClientError as e:
-            if e.code != 404:
-                print(f'HTTP error for {path}: {e.code}', file=sys.stderr)
-            self._dead.append(url)
+            if callable(self.error_callback):
+                self.error_callback(f'{path} -> HTTP status code = {e.code}')
+            self.results.append({
+                'path': path,
+                'effective_url': '',
+                'status_code': e.code,
+                'headers': [],
+            })
         finally:
             self.queue.task_done()
 
     async def worker(self) -> None:
         while True:
             try:
-                await self.grab()
+                await self.try_url()
             except asyncio.CancelledError:
                 return
 
     @property
+    def result(self) -> Iterable[str]:
+        return self.results
+
     def alive(self) -> Iterable[str]:
-        return self._alive
-
-    @property
-    def dead(self) -> Iterable[str]:
-        return self._dead
+        return [r for r in self.results if r['status_code'] == 200]
 
 
-def pre_fetch_hook(url: str) -> None:
-    print(f'\rTrying {url} ...')
+async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwargs) -> None:
 
+    def pre_fetch_hook(url: str) -> None:
+        print(f'Trying {url} ...')
 
-def found_hook(url: str) -> None:
-    print(f'\rFOUND {url}.')
+    def found_hook(url: str) -> None:
+        print(f'\u001b[32;1mFOUND {url}\u001b[0m')
 
+    def error_hook(message: str) -> None:
+        print(f'\u001b[31;1mERROR: {message}\u001b[0m')
 
-async def main(server: str, verbose: int, paths: Iterable[io.StringIO]):
-    found_callback = found_hook if verbose > 0 else None
-    pre_fetch_callback = pre_fetch_hook if verbose > 0 else None
-    dirb = Dirbuster(server, pre_fetch_callback, found_callback, 8)
+    kwargs['pre_fetch_callback'] = pre_fetch_hook \
+        if verbose > 0 else None
+    kwargs['found_callback'] = found_hook \
+        if verbose > 0 else None
+    kwargs['error_callback'] = error_hook \
+        if verbose > 0 else None
+
+    dirb = Dirb(base_url, **kwargs)
     for p in paths:        
         await dirb.run(p.readlines())
-        print('Found:')
-        for result in dirb.alive:
-            print(f' - {result}')
+
+    if kwargs.get('output_file'):
+        output = open(kwargs.get('output_file'), 'w+')  
+    else:
+        output = sys.stdout
+
+    if kwargs.get('csv'):
+        escape_quotes = str.maketrans({'"': r'\"'})
+        FIELDS = ['status_code', 'path', 'effective_url', 'headers']
+        output.write(f'''{';'.join(FIELDS)}\n''')
+        for result in dirb.results:
+            output.write(f'''{result['status_code']};"{result['path'].translate(escape_quotes)}";"{result['effective_url'].translate(escape_quotes)}";''')
+            headers = [f'"{h.translate(escape_quotes)}:{v.translate(escape_quotes)}"' for (h, v) in result['headers']]
+            output.write(','.join(headers))
+            output.write('\n')
+    else:
+        alive = dirb.alive()
+        if len(alive) == 0:
+            print('\n\u001b[31;1mNOTHING FOUND 🧐\u001b[0m')
+        else:
+            print(f'''\n\u001b[32;1mFound {len(alive)} accessible URL{'s' if len(alive) != 1 else ''}:\u001b[0m''')
+            for d in alive:
+                print(f'''- {d['path']}''')
 
 
 if __name__ == '__main__':
+    DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
     parser = argparse.ArgumentParser(prog='dirb', description='Directory Buster')
-    parser.add_argument('root', help='Root URL, e.g. http://example.com')
+    parser.add_argument('base_url', help='Base URL, e.g. https://example.com')
     parser.add_argument('-v', '--verbose', action='count', default=0)
-    parser.add_argument('-w', '--word-file', action='append', default=[])
+    parser.add_argument('-w', '--word-file', help='Word file', action='append', default=[])
+    parser.add_argument('-a', '--user-agent', help='User agent', default=DEFAULT_USER_AGENT)
+    parser.add_argument('-c', '--cookie', help='Cookie string')
+    parser.add_argument('-H', '--header', help='Add header string', action='append', default=[])
+    parser.add_argument('-u', '--credentials', help='username:password')
+    parser.add_argument('-f', '--follow-redirects', action='store_true', help='Follow 301/302 redirects', default=False)
+    parser.add_argument('-t', '--csv', action='store_true', help='Generate CSV output', default=False)
+    parser.add_argument('-o', '--output', help='Write output to file')
     args = parser.parse_args()
     word_files = [sys.stdin]
     if len(args.word_file) > 0:
         word_files = [open(filename, 'r') for filename in args.word_file]
-    asyncio.run(main(args.root, args.verbose, word_files))
+    asyncio.run(main(
+        args.base_url,
+        args.verbose,
+        word_files, 
+        user_agent=args.user_agent,
+        cookie=args.cookie,
+        headers=args.header,
+        credentials=args.credentials,
+        follow_redirects=args.follow_redirects,
+        csv=args.csv,
+        output_file=args.output))

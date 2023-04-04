@@ -1,6 +1,6 @@
 # dirb.py
 
-**A minimal dir buster implementation.**
+**An improved dir buster implementation in Python.**
 
 This software scans a web server for accessible paths. Paths to check are read from text files, one path per line.
 

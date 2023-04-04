@@ -15,6 +15,8 @@ class Dirb:
         self.pre_fetch_callback = kwargs.get('pre_fetch_callback', None)
         self.user_agent = kwargs.get('user_agent', None)
         self.follow_redirects = kwargs.get('follow_redirects', False)
+        self.probe_extensions = kwargs.get('probe_extensions', None)
+        self.probe_variations = kwargs.get('probe_variations', None)
         self.cookies = kwargs.get('cookies', None)
         self.headers = kwargs.get('headers', None)
         credentials = kwargs.get('credentials', None)
@@ -29,6 +31,8 @@ class Dirb:
         paths = set([path.strip() for path in paths])
         for url in paths:
             await self.queue.put(url)
+            for ext in self.probe_extensions:
+                await self.queue.put(f'{url}{ext}')
         # spawn workers
         workers = [asyncio.create_task(self.worker()) 
                    for _ in range(self.num_workers)]
@@ -57,6 +61,9 @@ class Dirb:
                 'status_code': response.code,
                 'headers': [header for header in response.headers.get_all()],
             })
+            if response.code == 200:
+                for ext in self.probe_variations:
+                    await self.queue.put(f'{path}{ext}')
             if callable(self.found_callback):
                 await self.found_callback(path)
         except HTTPClientError as e:
@@ -149,6 +156,8 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--cookie', help='Cookie string')
     parser.add_argument('-H', '--header', help='Add header string', action='append', default=[])
     parser.add_argument('-u', '--credentials', help='username:password')
+    parser.add_argument('-X', '--probe-extensions', help='do not only check the path itself, but also try every path by adding these extensions', default='')
+    parser.add_argument('-M', '--probe-variations', help='if a path is found, check these variations by appending them to the path', default='')
     parser.add_argument('-f', '--follow-redirects', action='store_true', help='Follow 301/302 redirects', default=False)
     parser.add_argument('-t', '--csv', action='store_true', help='Generate CSV output', default=False)
     parser.add_argument('-o', '--output', help='Write output to file')
@@ -166,6 +175,8 @@ if __name__ == '__main__':
         headers=args.header,
         credentials=args.credentials,
         follow_redirects=args.follow_redirects,
+        probe_extensions=args.probe_extensions.split(','),
+        probe_variations=args.probe_variations.split(','),
         num_workers=args.num_workers,
         csv=args.csv,
         output_file=args.output))

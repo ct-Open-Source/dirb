@@ -15,8 +15,8 @@ class Dirb:
         self.pre_fetch_callback = kwargs.get('pre_fetch_callback', None)
         self.user_agent = kwargs.get('user_agent', None)
         self.follow_redirects = kwargs.get('follow_redirects', False)
-        self.probe_extensions = kwargs.get('probe_extensions', None)
-        self.probe_variations = kwargs.get('probe_variations', None)
+        self.probe_extensions = kwargs.get('probe_extensions', [])
+        self.probe_variations = kwargs.get('probe_variations', [])
         self.cookies = kwargs.get('cookies', None)
         self.headers = kwargs.get('headers', None)
         credentials = kwargs.get('credentials', None)
@@ -93,7 +93,7 @@ class Dirb:
         return [r for r in self.results if r['status_code'] == 200]
 
 
-async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwargs) -> None:
+async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], **kwargs) -> None:
 
     async def pre_fetch_hook(url: str) -> None:
         async with asyncio.Lock():
@@ -116,8 +116,8 @@ async def main(base_url: str, verbose: int, paths: Iterable[io.StringIO], **kwar
         if not quiet and verbose > 0 else None
 
     dirb = Dirb(base_url, **kwargs)
-    for p in paths:        
-        await dirb.run(p.readlines())
+    for word_file in word_files:
+        await dirb.run(word_file.readlines())
 
     if kwargs.get('output_file'):
         output = open(kwargs.get('output_file'), 'w+')
@@ -156,8 +156,8 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--cookie', help='Cookie string')
     parser.add_argument('-H', '--header', help='Add header string', action='append', default=[])
     parser.add_argument('-u', '--credentials', help='username:password')
-    parser.add_argument('-X', '--probe-extensions', help='do not only check the path itself, but also try every path by adding these extensions', default='')
-    parser.add_argument('-M', '--probe-variations', help='if a path is found, check these variations by appending them to the path', default='')
+    parser.add_argument('-X', '--probe-extensions', help='do not only check the path itself, but also try every path by adding these extensions', default=None)
+    parser.add_argument('-M', '--probe-variations', help='if a path is found, check these variations by appending them to the path', default=None)
     parser.add_argument('-f', '--follow-redirects', action='store_true', help='Follow 301/302 redirects', default=False)
     parser.add_argument('-t', '--csv', action='store_true', help='Generate CSV output', default=False)
     parser.add_argument('-o', '--output', help='Write output to file')
@@ -175,8 +175,8 @@ if __name__ == '__main__':
         headers=args.header,
         credentials=args.credentials,
         follow_redirects=args.follow_redirects,
-        probe_extensions=args.probe_extensions.split(','),
-        probe_variations=args.probe_variations.split(','),
+        probe_extensions=args.probe_extensions.split(',') if isinstance(args.probe_extensions, str) else [],
+        probe_variations=args.probe_variations.split(',') if isinstance(args.probe_variations, str) else [],
         num_workers=args.num_workers,
         csv=args.csv,
         output_file=args.output))
